@@ -40,6 +40,7 @@ async function getTelebirrNumber() {
   return snap.val() || DEFAULT_TELEBIRR_NUMBER;
 }
 
+// ============ WEB LOGIN ROUTINE ============
 exports.verifyTelegramLogin = onCall(async (request) => {
   const { initData } = request.data;
   if (!initData) throw new HttpsError("invalid-argument", "initData required");
@@ -52,14 +53,11 @@ exports.verifyTelegramLogin = onCall(async (request) => {
   const dataCheckString = [...params.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join("\n");
   const secretKey = crypto.createHmac("sha256", "WebAppData").update(TELEGRAM_BOT_TOKEN).digest();
   const computedHash = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
-  const computedHashBuffer = Buffer.from(computedHash, "hex");
-  const providedHashBuffer = Buffer.from(hash, "hex");
-  if (providedHashBuffer.length !== computedHashBuffer.length || !crypto.timingSafeEqual(computedHashBuffer, providedHashBuffer)) {
+  if (Buffer.from(hash, "hex").length !== Buffer.from(computedHash, "hex").length || !crypto.timingSafeEqual(Buffer.from(computedHash, "hex"), Buffer.from(hash, "hex"))) {
     throw new HttpsError("permission-denied", "Invalid Telegram signature");
   }
   const authDate = Number(authDateValue);
-  const ageSeconds = Date.now() / 1000 - authDate;
-  if (!Number.isFinite(authDate) || ageSeconds > 300 || ageSeconds < -30) {
+  if (!Number.isFinite(authDate) || (Date.now() / 1000 - authDate) > 300 || (Date.now() / 1000 - authDate) < -30) {
     throw new HttpsError("permission-denied", "initData expired, reopen the app");
   }
   let user;
@@ -80,6 +78,7 @@ exports.verifyTelegramLogin = onCall(async (request) => {
   return { customToken, uid, mainWallet: toFiniteNumber(profile.mainWallet) || 0, playWallet: toFiniteNumber(profile.playWallet) || 0, bonus: toFiniteNumber(profile.bonus) || 0 };
 });
 
+// ============ MULTIPLAYER JOIN MATCH ROUTINE ============
 exports.joinRoom = onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError("unauthenticated", "Sign in first");
@@ -104,13 +103,11 @@ exports.joinRoom = onCall(async (request) => {
     return balance - totalCost;
   });
   if (!balanceResult.committed) {
-    const balance = toFiniteNumber(balanceResult.snapshot.val());
-    throw new HttpsError("failed-precondition", `Insufficient play wallet balance. You have ${balance === null ? 0 : balance} ETB; ${totalCost} ETB required.`);
+    throw new HttpsError("failed-precondition", "Insufficient balance");
   }
   const joinResult = await roomRef.transaction((room) => {
     room = room || { stake: parsedStake, state: "waiting", players: {}, taken: {}, cartelaCount: 0 };
-    if (room.state !== "waiting") return;
-    if (Number(room.stake) !== parsedStake) return;
+    if (room.state !== "waiting" || Number(room.stake) !== parsedStake) return;
     room.taken = room.taken || {};
     for (const num of parsedNumbers) { if (room.taken[num]) return; }
     room.players = room.players || {};
@@ -121,7 +118,7 @@ exports.joinRoom = onCall(async (request) => {
   });
   if (!joinResult.committed) {
     await playWalletRef.transaction((current) => (toFiniteNumber(current) || 0) + totalCost);
-    throw new HttpsError("failed-precondition", "Could not join room (a cartela is already taken or room started)");
+    throw new HttpsError("failed-precondition", "Room transaction locked or failed");
   }
   const room = joinResult.snapshot.val();
   const playerCount = Object.keys(room.players).length;
@@ -134,6 +131,7 @@ exports.joinRoom = onCall(async (request) => {
   return { roomId, playerCount, yourCards: parsedNumbers.map((n) => ({ number: n, card: getCard(n) })), playWallet: toFiniteNumber(balanceSnapshot.val()) || 0 };
 });
 
+// ============ COMPACT GAME ENGINE DRAW LOOP ============
 exports.advanceGames = onSchedule({ schedule: "every 1 minutes" }, async () => {
   const roomsSnap = await db.ref("rooms").orderByChild("state").equalTo("running").once("value");
   const rooms = roomsSnap.val() || {};
@@ -150,44 +148,39 @@ exports.advanceGames = onSchedule({ schedule: "every 1 minutes" }, async () => {
     const players = room.players || {};
     const winners = [];
     for (const [uid, player] of Object.entries(players)) {
-      const cards = player.cartelaNumbers || [];
-      const won = cards.some((num) => hasBingo(num, calledSet));
-      if (won) winners.push(uid);
+      if ((player.cartelaNumbers || []).some((num) => hasBingo(num, calledSet))) winners.push(uid);
     }
     if (winners.length > 0) {
-      const totalCartelas = room.cartelaCount || Object.values(players).reduce((sum, p) => sum + (p.cartelaNumbers || []).length, 0);
-      const gross = room.stake * totalCartelas;
-      const totalPrize = Math.floor(gross * (1 - HOUSE_CUT));
-      const share = Math.floor(totalPrize / winners.length);
+      const gross = room.stake * (room.cartelaCount || 1);
+      const share = Math.floor((gross * (1 - HOUSE_CUT)) / winners.length);
       await roomRef.child("state").set("finished");
       await roomRef.child("winners").set(winners);
       await roomRef.child("prizePerWinner").set(share);
       for (const winnerUid of winners) {
         await db.ref(`users/${winnerUid}/mainWallet`).transaction((current) => (toFiniteNumber(current) || 0) + share);
-        const telegramId = winnerUid.replace("tg_", "");
-        await sendMessage(telegramId, `🎉 BINGO! You won ${share} ETB! It has been added to your Main Wallet.`);
+        await sendMessage(winnerUid.replace("tg_", ""), `🎉 BINGO! You won ${share} ETB! Placed in Main Wallet.`);
       }
     }
   }
 });
 
+// ============ WEBHOOK FINANCIAL DISPATCHER ============
 exports.telegramWebhook = onRequest(async (req, res) => {
   const update = req.body;
-  if (update.message && update.message.text) {
-    const message = update.message;
-    if (String(message.from.id) === String(ADMIN_TELEGRAM_ID)) {
-      const match = message.text.match(/^\/setphone\s+(\d{9,15})$/);
-      if (match) {
-        await db.ref("settings/telebirrNumber").set(match);
-        await sendMessage(ADMIN_TELEGRAM_ID, `✅ Deposit Telebirr number updated to ${match}`);
-      }
-    }
+  if (update.message && update.message.text && String(update.message.from.id) === String(ADMIN_TELEGRAM_ID)) {
+    const match = update.message.text.match(/^\/setphone\s+(\d{9,15})$/);
+    if (match) { await db.ref("settings/telebirrNumber").set(match[1]); await sendMessage(ADMIN_TELEGRAM_ID, `✅ Payout receiver number updated to ${match[1]}`); }
     res.status(200).send("ok"); return;
   }
   const callback = update.callback_query;
-  if (!callback) { res.status(200).send("ok"); return; }
-  if (String(callback.from.id) !== String(ADMIN_TELEGRAM_ID)) { await answerCallbackQuery(callback.id, "Not authorized"); res.status(200).send("ok"); return; }
+  if (!callback || String(callback.from.id) !== String(ADMIN_TELEGRAM_ID)) { res.status(200).send("ok"); return; }
   const data = callback.data;
-  const chatId = callback.message.chat.id;
-  const messageId = callback.message.message_id;
   if (data.startsWith("dep_approve_") || data.startsWith("dep_reject_")) {
+    const approve = data.startsWith("dep_approve_");
+    const requestRef = db.ref(`depositRequests/${data.replace(approve ? "dep_approve_" : "dep_reject_", "")}`);
+    const snap = await requestRef.once("value");
+    const depositRequest = snap.val();
+    if (depositRequest && depositRequest.status === "pending") {
+      if (approve) {
+        await db.ref(`users/${depositRequest.uid}/mainWallet`).transaction((current) => (toFiniteNumber(current) || 0) + depositRequest.amount);
+        await requestRef.child("status").set("approved");
