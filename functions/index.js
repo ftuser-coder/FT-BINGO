@@ -230,8 +230,8 @@ exports.telegramWebhook = onRequest(async (req, res) => {
     if (String(message.from.id) === String(ADMIN_TELEGRAM_ID)) {
       const match = message.text.match(/^\/setphone\s+(\d{9,15})$/);
       if (match) {
-        await db.ref("settings/telebirrNumber").set(match);
-        await sendMessage(ADMIN_TELEGRAM_ID, `✅ Deposit Telebirr number updated to ${match}`);
+        await db.ref("settings/telebirrNumber").set(match[1]);
+        await sendMessage(ADMIN_TELEGRAM_ID, `✅ Deposit Telebirr number updated to ${match[1]}`);
       }
     }
     res.status(200).send("ok");
@@ -241,3 +241,4 @@ exports.telegramWebhook = onRequest(async (req, res) => {
   const callback = update.callback_query;
   if (!callback) { res.status(200).send("ok"); return; }
 
+  if (String(callback.from.id) !== String(ADMIN_TELEGRAM_ID)) {
