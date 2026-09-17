@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "functions/index.js",
   "scripts": {
-    "start": "node functions/index.js"
+    "start": "main functions/index.js"
   },
   "dependencies": {
     "express": "^4.19.2",
