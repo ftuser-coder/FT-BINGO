@@ -11,7 +11,7 @@ const FIRST_DEPOSIT_BONUS = 10;
 const HOUSE_CUT = 0.2;
 const MAX_CARTELAS_PER_PLAYER = 2;
 
-// ============ IN-MEMORY STORAGE (REPLACES FIREBASE) ============
+// ============ IN-MEMORY STORAGE (NO EXTERNAL DB REQUIRED) ============
 const localDatabase = {
   users: {},
   rooms: {}
@@ -133,7 +133,8 @@ appServer.post("/joinRoom", async (req, res) => {
 });
 
 // ============ TELEGRAM WEBHOOK ROUTE ============
-appServer.post("/api/telegram", async (req, res) => {
+// Accepts incoming updates at both paths to ensure total routing compatibility
+const handleTelegramWebhook = async (req, res) => {
   try {
     const { message, callback_query } = req.body;
 
@@ -168,7 +169,10 @@ appServer.post("/api/telegram", async (req, res) => {
     console.error("Telegram webhook error:", err);
     res.status(200).send("OK");
   }
-});
+};
+
+appServer.post("/telegram", handleTelegramWebhook);
+appServer.post("/api/telegram", handleTelegramWebhook);
 
 setInterval(async () => {
   try { await advanceGames(); } catch (err) { console.error(err); }
