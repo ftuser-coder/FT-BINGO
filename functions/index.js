@@ -179,4 +179,34 @@ setInterval(async () => {
 }, 60000);
 
 const PORT = process.env.PORT || 3000;
-appServer.listen(PORT, () => { console.log("FT BINGO backend cluster is running live."); });
+appServer.listen(PORT, () => { console.log("FT BINGO backend cluster is running live."); });// ============ ABSOLUTE TELEGRAM WEBHOOK OVERRIDE ============
+const handleBotWebhook = async (req, res) => {
+  try {
+    const { message, callback_query } = req.body;
+
+    if (message && message.text) {
+      const chatId = message.chat.id;
+      if (message.text === "/start") {
+        const welcomeText = "<b>Welcome to FT BINGO!</b> 🎮\n\nReady to play and win? Tap the button below to open your bingo card!";
+        const replyMarkup = {
+          inline_keyboard: [[{ text: "🚀 Play Bingo", web_app: { url: "https://onrender.com" } }]]
+        };
+        await sendMessage(chatId, welcomeText, replyMarkup);
+      }
+    }
+    if (callback_query) {
+      await answerCallbackQuery(callback_query.id, "Loading...");
+    }
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("Webhook Error:", err);
+    res.status(200).send("OK");
+  }
+};
+
+// Catch absolutely every possible path Telegram might send
+appServer.post("/telegram", handleBotWebhook);
+appServer.post("/api/telegram", handleBotWebhook);
+appServer.post("/functions/telegram", handleBotWebhook);
+appServer.post("/", handleBotWebhook);
+
