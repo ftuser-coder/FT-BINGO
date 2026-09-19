@@ -10,27 +10,12 @@ const DEFAULT_TELEBIRR_NUMBER = "0969437501";
 const FIRST_DEPOSIT_BONUS = 10;
 const HOUSE_CUT = 0.2;
 const MAX_CARTELAS_PER_PLAYER = 2;
-const DB_URL = "https://firebaseio.com";
 
-// ============ DATABASE HELPER FUNCTION ============
-function dbCall(path, method = "GET", data = null) {
-  return new Promise((resolve, reject) => {
-    const url = `${DB_URL}/${path}.json`;
-    const payload = data ? JSON.stringify(data) : "";
-    const options = {
-      method: method,
-      headers: { "Content-Type": "application/json" }
-    };
-    const req = https.request(url, options, (res) => {
-      let body = "";
-      res.on("data", (chunk) => body += chunk);
-      res.on("end", () => resolve(body ? JSON.parse(body) : null));
-    });
-    req.on("error", reject);
-    if (data) req.write(payload);
-    req.end();
-  });
-}
+// ============ IN-MEMORY STORAGE (REPLACES FIREBASE) ============
+const localDatabase = {
+  users: {},
+  rooms: {}
+};
 
 function toFiniteNumber(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -61,10 +46,10 @@ async function verifyTelegramLogin(reqData) {
   let user = JSON.parse(userValue);
   const uid = `tg_${user.id}`;
   
-  let profile = await dbCall(`users/${uid}`);
+  let profile = localDatabase.users[uid];
   if (!profile) {
-    profile = { mainWallet: 0, playWallet: 0, bonus: 0, firstDepositBonusGiven: false, name: user.first_name || "Player", telegramId: user.id };
-    await dbCall(`users/${uid}`, "PUT", profile);
+    profile = { mainWallet: 0, playWallet: 1000, bonus: 0, firstDepositBonusGiven: false, name: user.first_name || "Player", telegramId: user.id };
+    localDatabase.users[uid] = profile;
   }
   return { uid, mainWallet: profile.mainWallet || 0, playWallet: profile.playWallet || 0, bonus: profile.bonus || 0 };
 }
@@ -77,11 +62,11 @@ async function joinRoom(reqData, uid) {
   if (parsedStake === null || !Array.isArray(cartelaNumbers)) throw new Error("Invalid arguments");
   
   const totalCost = parsedStake * cartelaNumbers.length;
-  let profile = await dbCall(`users/${uid}`);
+  let profile = localDatabase.users[uid];
   if (!profile || (profile.playWallet || 0) < totalCost) throw new Error("Insufficient balance");
 
   const roomId = `stake_${parsedStake}_open`;
-  let room = await dbCall(`rooms/${roomId}`);
+  let room = localDatabase.rooms[roomId];
   if (!room) room = { stake: parsedStake, state: "waiting", players: {}, taken: {}, cartelaCount: 0 };
 
   cartelaNumbers.forEach(num => {
@@ -91,17 +76,17 @@ async function joinRoom(reqData, uid) {
   room.cartelaCount = (room.cartelaCount || 0) + cartelaNumbers.length;
 
   profile.playWallet -= totalCost;
-  await dbCall(`users/${uid}`, "PUT", profile);
+  localDatabase.users[uid] = profile;
 
   if (Object.keys(room.players).length >= 2) room.state = "running";
-  await dbCall(`rooms/${roomId}`, "PUT", room);
+  localDatabase.rooms[roomId] = room;
 
   return { roomId, playerCount: Object.keys(room.players).length, playWallet: profile.playWallet };
 }
 
 // ============ COMPACT GAME ENGINE DRAW LOOP ============
 async function advanceGames() {
-  const rooms = await dbCall("rooms") || {};
+  const rooms = localDatabase.rooms || {};
   for (const [roomId, room] of Object.entries(rooms)) {
     if (room.state !== "running") continue;
     const calledBefore = Object.keys(room.calledNumbers || {}).map(Number);
@@ -110,7 +95,7 @@ async function advanceGames() {
 
     if (remaining.length === 0) {
       room.state = "finished";
-      await dbCall(`rooms/${roomId}`, "PUT", room);
+      localDatabase.rooms[roomId] = room;
       continue;
     }
 
@@ -119,7 +104,7 @@ async function advanceGames() {
     room.calledNumbers[next] = true;
     room.lastCalled = next;
 
-    await dbCall(`rooms/${roomId}`, "PUT", room);
+    localDatabase.rooms[roomId] = room;
   }
 }
 
@@ -152,7 +137,6 @@ appServer.post("/api/telegram", async (req, res) => {
   try {
     const { message, callback_query } = req.body;
 
-    // Handle normal text messages (like /start)
     if (message && message.text) {
       const chatId = message.chat.id;
       const text = message.text;
@@ -160,13 +144,12 @@ appServer.post("/api/telegram", async (req, res) => {
       if (text === "/start") {
         const welcomeText = "<b>Welcome to FT BINGO!</b> 🎮\n\nReady to play and win? Tap the button below to open your bingo card!";
         
-        // Sets up the Inline Keyboard Button to launch the Telegram WebApp interface
         const replyMarkup = {
           inline_keyboard: [
             [
               { 
                 text: "🚀 Play Bingo", 
-                web_app: { url: "https://onrender.com" } 
+                web_app: { url: "https://ft-bingo.onrender.com" } 
               }
             ]
           ]
@@ -176,7 +159,6 @@ appServer.post("/api/telegram", async (req, res) => {
       }
     }
 
-    // Handle button clicks (Callback Queries)
     if (callback_query) {
       await answerCallbackQuery(callback_query.id, "Loading...");
     }
@@ -184,7 +166,7 @@ appServer.post("/api/telegram", async (req, res) => {
     res.status(200).send("OK");
   } catch (err) {
     console.error("Telegram webhook error:", err);
-    res.status(200).send("OK"); // Always reply 200 so Telegram doesn't break loop-retrying
+    res.status(200).send("OK");
   }
 });
 
