@@ -147,6 +147,47 @@ appServer.post("/joinRoom", async (req, res) => {
   }
 });
 
+// ============ TELEGRAM WEBHOOK ROUTE ============
+appServer.post("/api/telegram", async (req, res) => {
+  try {
+    const { message, callback_query } = req.body;
+
+    // Handle normal text messages (like /start)
+    if (message && message.text) {
+      const chatId = message.chat.id;
+      const text = message.text;
+
+      if (text === "/start") {
+        const welcomeText = "<b>Welcome to FT BINGO!</b> 🎮\n\nReady to play and win? Tap the button below to open your bingo card!";
+        
+        // Sets up the Inline Keyboard Button to launch the Telegram WebApp interface
+        const replyMarkup = {
+          inline_keyboard: [
+            [
+              { 
+                text: "🚀 Play Bingo", 
+                web_app: { url: "https://onrender.com" } 
+              }
+            ]
+          ]
+        };
+        
+        await sendMessage(chatId, welcomeText, replyMarkup);
+      }
+    }
+
+    // Handle button clicks (Callback Queries)
+    if (callback_query) {
+      await answerCallbackQuery(callback_query.id, "Loading...");
+    }
+
+    res.status(200).send("OK");
+  } catch (err) {
+    console.error("Telegram webhook error:", err);
+    res.status(200).send("OK"); // Always reply 200 so Telegram doesn't break loop-retrying
+  }
+});
+
 setInterval(async () => {
   try { await advanceGames(); } catch (err) { console.error(err); }
 }, 60000);
