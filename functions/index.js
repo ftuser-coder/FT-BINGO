@@ -4,7 +4,7 @@ const { getCard, hasBingo } = require("./cartela");
 const { sendMessage, answerCallbackQuery, editMessageText } = require("./telegram");
 
 // ============ FT BINGO CONFIGURATION ============
-const TELEGRAM_BOT_TOKEN = "8618935818:AAHRiAfYV_yb-QDzfxjV2_XTURvgknAgi_c";
+const TELEGRAM_BOT_TOKEN = "8313850405:AAHZis31QfYGr3RF6_YfkMXn4ZEVQNmeA44";
 const ADMIN_TELEGRAM_ID = 6502378631; 
 const DEFAULT_TELEBIRR_NUMBER = "0969437501"; 
 const FIRST_DEPOSIT_BONUS = 10;
