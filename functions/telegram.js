@@ -1,5 +1,5 @@
 const https = require("https");
-const TELEGRAM_BOT_TOKEN = "8313850405:AAFKbGf0lrXfXePWyESTkOYdMwyjODjZ7pY";
+const TELEGRAM_BOT_TOKEN = "8956128724:AAGF7luuXQdgu8D-J2HdYDicMTERRDsz8CU";
 
 function callTelegramApi(method, payload) {
   return new Promise((resolve, reject) => {
